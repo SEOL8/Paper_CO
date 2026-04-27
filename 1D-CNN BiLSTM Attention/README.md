@@ -1,6 +1,6 @@
 # Non-Invasive Cardiac Output Estimation
 
-PPG·ECG 신호와 환자 정보(성별, 나이, 신장, 체중)를 입력받아 심박출량(CO, L/min)을 비침습적으로 추정하는 딥러닝 모델 실험 저장소입니다.  
+Raw PPG, ECG 신호와 환자 정보(성별, 나이, 신장, 체중)를 입력받아 심박출량(CO, L/min)을 비침습적으로 추정하는 모델  
 현재는 **1D CNN + BiLSTM + Self-Attention** 모델이 포함되어 있으며, 이후 다른 모델도 순차적으로 추가될 예정입니다.
 
 ---
@@ -9,18 +9,14 @@ PPG·ECG 신호와 환자 정보(성별, 나이, 신장, 체중)를 입력받아
 
 | 모델 | 디렉토리 | 설명 |
 |------|----------|------|
-| 1D CNN + BiLSTM + Self-Attention | `models/cnn_bilstm_attention.py` | PPG/ECG 각각 CNN→BiLSTM→Self-Attention, 환자 정보 MLP, FusionAttention으로 CO 예측 |
-| _(추가 예정)_ | `models/` | — |
+| 1D CNN + BiLSTM + Self-Attention | `models/cnn_bilstm_attention.py` | PPG/ECG 다른 채널로 CNN, BiLSTM 처리, 환자 정보 MLP처리, FusionAttention으로 CO 예측 |
+
 
 ---
 
 ## 모델 구조 (1D CNN + BiLSTM + Self-Attention)
 
-```
-PPG (B, T, 1)  ──► CNN1D ──► BiLSTM ──► SignalAttention ──► (B, H) ─┐
-ECG (B, T, 1)  ──► CNN1D ──► BiLSTM ──► SignalAttention ──► (B, H) ─┼─► FusionAttention ──► Linear ──► CO (B,)
-info (B, 4)    ──────────────────────► MLP ─────────────► (B, H) ─┘
-```
+![Model Pipeline](Model architecture.png)
 
 | 컴포넌트 | 역할 |
 |----------|------|
