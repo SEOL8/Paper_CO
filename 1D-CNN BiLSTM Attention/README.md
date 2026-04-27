@@ -1,8 +1,6 @@
 # Non-Invasive Cardiac Output Estimation(baseline)
 
-PPG/ECG 신호와 환자 정보(성별, 나이, 신장, 체중)로 심박출량(CO, L/min)을 비침습적으로 추정합니다.
-
-현재 저장소에는 1D CNN + BiLSTM + Self-Attention  모델이 포함되어 있으며, 이후 모델이 순차적으로 추가됩니다.
+Cardiac output (CO, L/min) is estimated noninvasively using PPG/ECG signals and patient data (gender, age, height, weight).
 
 ---
 
