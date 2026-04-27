@@ -47,7 +47,7 @@ Cardiac output (CO, L/min) is estimated noninvasively using PPG/ECG signals and 
 
 ---
 
-## 데이터 형식
+## Data Types
 
 | File | Description |
 |------|-------------|
