@@ -22,17 +22,13 @@ def set_seed(seed=42):
 set_seed(42)
 
 
-# ──────────────────────────────────────────────
-# Dataset
-# ──────────────────────────────────────────────
-
 class PPGECGDataset(Dataset):
     """
-    Expects pickle files with columns:
-        ppg            : 1-D numpy array (raw signal, ~2500 samples @ 250 Hz)
-        ecg_s_transform: 2-D numpy array (599 x 2500) — pre-computed via S-Transform_test.ipynb
-        Sex, Age, Ht, Wt: scalar patient demographics
-        co             : cardiac output label (L/min)
+    Each pickle must contain:
+      - ppg             : 1-D array, raw signal (~2500 samples at 250 Hz)
+      - ecg_s_transform : 2-D array (599, 2500), pre-computed in S-Transform_test.ipynb
+      - Sex, Age, Ht, Wt: scalar demographics
+      - co              : cardiac output label (L/min)
     """
     def __init__(self, data_path, patient_scaler=None, max_ppg_len=2500):
         self.data = pd.read_pickle(data_path)
@@ -52,21 +48,19 @@ class PPGECGDataset(Dataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
 
-        # PPG: zero-pad / truncate → z-score normalise
         ppg = np.zeros(self.max_ppg_len, dtype=np.float32)
         sig = row['ppg']
         n = min(self.max_ppg_len, len(sig))
         ppg[:n] = sig[:n]
         ppg = (ppg - ppg.mean()) / (ppg.std() + 1e-8)
-        ppg_tensor = torch.from_numpy(ppg).unsqueeze(-1)       # (2500, 1)
+        ppg_tensor = torch.from_numpy(ppg).unsqueeze(-1)         # (2500, 1)
 
-        # ECG S-Transform image
         ecg_st = row['ecg_s_transform']
         if not isinstance(ecg_st, np.ndarray):
             ecg_st = np.zeros((1, 599, 2500), dtype=np.float32)
         if ecg_st.ndim == 2:
-            ecg_st = ecg_st[np.newaxis]                        # (1, 599, 2500)
-        ecg_tensor = torch.from_numpy(ecg_st.astype(np.float32))
+            ecg_st = ecg_st[np.newaxis]
+        ecg_tensor = torch.from_numpy(ecg_st.astype(np.float32))  # (1, 599, 2500)
 
         patient_tensor = torch.from_numpy(self.patient_info[idx])  # (4,)
         co_tensor = torch.tensor(float(row['co']), dtype=torch.float32)
@@ -86,12 +80,8 @@ def build_dataloaders(data_dir='./', batch_size=64):
     return train_loader, val_loader, test_loader
 
 
-# ──────────────────────────────────────────────
-# ECG branch sub-blocks
-# ──────────────────────────────────────────────
-
+# Recalibrates activations along frequency, time, and channel axes of the S-Transform map
 class SpectralAttentionBlock(nn.Module):
-    """Joint frequency / time / channel attention for 2-D feature maps."""
     def __init__(self, channels):
         super().__init__()
         mid = max(channels // 8, 1)
@@ -115,8 +105,8 @@ class SpectralAttentionBlock(nn.Module):
         return x * self.freq_attn(x) * self.time_attn(x) * self.chan_attn(x)
 
 
+# Applies separate frequency-axis and time-axis convolutions, then merges via residual
 class FrequencyTimeFusion(nn.Module):
-    """Separate frequency-axis and time-axis convolutions, then fuse via residual."""
     def __init__(self, channels):
         super().__init__()
         self.freq_conv = nn.Sequential(
@@ -157,25 +147,16 @@ class ResidualBlock2D(nn.Module):
         return F.relu(self.block(x) + self.shortcut(x))
 
 
-# ──────────────────────────────────────────────
-# Three branches
-# ──────────────────────────────────────────────
-
 class PPGModule(nn.Module):
-    """1D CNN encoder → BiLSTM.  Output: (B, 256)"""
     def __init__(self, out_dim=256):
         super().__init__()
         self.cnn = nn.Sequential(
-            # (B, 1, 2500) → (B, 32, 625)
-            nn.Conv1d(1, 32, 7, padding=3), nn.BatchNorm1d(32), nn.ReLU(), nn.MaxPool1d(4),
-            # → (B, 64, 156)
-            nn.Conv1d(32, 64, 5, padding=2), nn.BatchNorm1d(64), nn.ReLU(), nn.MaxPool1d(4),
-            # → (B, 128, 39)
-            nn.Conv1d(64, 128, 3, padding=1), nn.BatchNorm1d(128), nn.ReLU(), nn.MaxPool1d(4),
-            # → (B, 256, 39)
-            nn.Conv1d(128, 256, 3, padding=1), nn.BatchNorm1d(256), nn.ReLU(),
+            nn.Conv1d(1, 32, 7, padding=3), nn.BatchNorm1d(32), nn.ReLU(), nn.MaxPool1d(4),    # 2500 → 625
+            nn.Conv1d(32, 64, 5, padding=2), nn.BatchNorm1d(64), nn.ReLU(), nn.MaxPool1d(4),   #  625 → 156
+            nn.Conv1d(64, 128, 3, padding=1), nn.BatchNorm1d(128), nn.ReLU(), nn.MaxPool1d(4), #  156 → 39
+            nn.Conv1d(128, 256, 3, padding=1), nn.BatchNorm1d(256), nn.ReLU(),                 #   39
         )
-        # bidirectional → hidden * 2 = 128 * 2 = 256
+        # bidirectional: hidden 128 × 2 = 256
         self.bilstm = nn.LSTM(256, 128, num_layers=2, batch_first=True,
                               bidirectional=True, dropout=0.3)
         self.drop = nn.Dropout(0.3)
@@ -188,25 +169,23 @@ class PPGModule(nn.Module):
 
 
 class ECGSTransformModule(nn.Module):
-    """2D ResNet encoder + Spectral Attention + Frequency-Time Fusion.  Output: (B, 256)"""
+    # S-Transform produces a 2D matrix (freq × time) that encodes both morphological
+    # and spectral information simultaneously. Passing it through a 2D ResNet lets the
+    # network learn fine spatial patterns across both axes — which a plain 1D conv cannot do.
     def __init__(self, out_dim=256):
         super().__init__()
-        # (B, 1, 599, 2500) → (B, 64, 150, 625)
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1, 64, 7, stride=2, padding=3, bias=False),
+        self.encoder = nn.Sequential(                                       # (B, 1, 599, 2500)
+            nn.Conv2d(1, 64, 7, stride=2, padding=3, bias=False),           # → (B, 64, 300, 1250)
             nn.BatchNorm2d(64), nn.ReLU(inplace=True),
-            nn.MaxPool2d(3, stride=2, padding=1),
+            nn.MaxPool2d(3, stride=2, padding=1),                           # → (B, 64, 150, 625)
         )
-        # stage 1 — (B, 64, 150, 625)
-        self.layer1 = self._make_layer(64, 64, blocks=2)
+        self.layer1 = self._make_layer(64, 64, blocks=2)                    # → (B, 64, 150, 625)
         self.spectral_attn1 = SpectralAttentionBlock(64)
 
-        # stage 2 — (B, 128, 75, 313)
-        self.layer2 = self._make_layer(64, 128, blocks=2, stride=2)
+        self.layer2 = self._make_layer(64, 128, blocks=2, stride=2)         # → (B, 128, 75, 313)
         self.freq_time_fusion = FrequencyTimeFusion(128)
 
-        # stage 3 — (B, 256, 38, 157)
-        self.layer3 = self._make_layer(128, 256, blocks=2, stride=2)
+        self.layer3 = self._make_layer(128, 256, blocks=2, stride=2)        # → (B, 256, 38, 157)
         self.spectral_attn2 = SpectralAttentionBlock(256)
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
@@ -221,17 +200,14 @@ class ECGSTransformModule(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # x: (B, 1, 599, 2500)
         x = self.encoder(x)
         x = self.spectral_attn1(self.layer1(x))
         x = self.freq_time_fusion(self.layer2(x))
         x = self.spectral_attn2(self.layer3(x))
-        x = torch.flatten(self.global_pool(x), 1)  # (B, 256)
-        return self.fc(x)
+        return self.fc(torch.flatten(self.global_pool(x), 1))  # (B, 256)
 
 
 class PatientInfoModule(nn.Module):
-    """MLP for demographic features.  Output: (B, 64)"""
     def __init__(self, in_dim=4, out_dim=64):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -243,15 +219,8 @@ class PatientInfoModule(nn.Module):
         return self.mlp(x)
 
 
-# ──────────────────────────────────────────────
-# Full model
-# ──────────────────────────────────────────────
-
 class MultimodalCOPredictor(nn.Module):
-    """
-    PPG (256) + ECG S-Transform (256) + Patient info (64) → CO prediction (L/min)
-    Total fused dimension: 576
-    """
+    # Feature dims: PPG 256 + ECG 256 + Patient 64 = 576
     def __init__(self):
         super().__init__()
         self.ppg_module     = PPGModule(out_dim=256)
@@ -266,21 +235,17 @@ class MultimodalCOPredictor(nn.Module):
 
     def forward(self, ppg, ecg_st, patient_info):
         """
-        ppg         : (B, 2500, 1)
-        ecg_st      : (B, 1, 599, 2500)
-        patient_info: (B, 4)   — [Sex, Age, Height, Weight], StandardScaler applied
-        returns     : (B,)     — predicted CO in L/min
+        ppg         : (B, 2500, 1)       raw PPG waveform
+        ecg_st      : (B, 1, 599, 2500)  S-Transform of ECG
+        patient_info: (B, 4)             [Sex, Age, Ht, Wt], StandardScaler applied
+        returns     : (B,)               predicted CO in L/min
         """
         ppg_feat     = self.ppg_module(ppg)
         ecg_feat     = self.ecg_module(ecg_st)
         patient_feat = self.patient_module(patient_info)
-        combined     = torch.cat([ppg_feat, ecg_feat, patient_feat], dim=1)  # (B, 576)
+        combined     = torch.cat([ppg_feat, ecg_feat, patient_feat], dim=1)
         return self.fusion(combined).squeeze(1)
 
-
-# ──────────────────────────────────────────────
-# Shape validation (runs with dummy tensors)
-# ──────────────────────────────────────────────
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -288,22 +253,14 @@ if __name__ == '__main__':
     model.eval()
 
     B = 4
-    ppg         = torch.randn(B, 2500, 1).to(device)
-    ecg_st      = torch.randn(B, 1, 599, 2500).to(device)
+    ppg          = torch.randn(B, 2500, 1).to(device)
+    ecg_st       = torch.randn(B, 1, 599, 2500).to(device)
     patient_info = torch.randn(B, 4).to(device)
 
     with torch.no_grad():
         out = model(ppg, ecg_st, patient_info)
 
-    print(f'PPG input    : {tuple(ppg.shape)}')
-    print(f'ECG input    : {tuple(ecg_st.shape)}')
-    print(f'Patient input: {tuple(patient_info.shape)}')
-    print(f'CO output    : {tuple(out.shape)}   (expected ({B},))')
-    print()
-
-    total = sum(p.numel() for p in model.parameters())
-    print(f'Total parameters: {total:,}')
-    print()
-    print('Results (test set):')
-    print('  RMSE : 0.832 L/min')
-    print('  MAE  : 0.780 L/min')
+    print(f'PPG     : {tuple(ppg.shape)}')
+    print(f'ECG ST  : {tuple(ecg_st.shape)}')
+    print(f'Patient : {tuple(patient_info.shape)}')
+    print(f'Output  : {tuple(out.shape)}')
