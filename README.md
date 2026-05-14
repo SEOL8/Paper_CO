@@ -273,20 +273,9 @@ Paper_CO/
 
 ## Acknowledgements
 
-This research was a collaboration with **Samsung Medical Center (SMC)**, which provided the clinical data, IRB/DRB approval, and institutional research support. External validation data came from **Seoul National University Bundang Hospital (SNUBH)**. Both institutions approved the study under their respective IRB/DRB protocols.
+This research was conducted in collaboration with **Samsung Medical Center (SMC)**, which provided the development cohort, IRB and DRB approval, and institutional research support. External validation data came from **Seoul National University Bundang Hospital (SNUBH)**, contributed under separate IRB approval.
 
----
-
-## Citation
-
-```bibtex
-@mastersthesis{seol2025multimodal,
-  title  = {A Multimodal Deep Learning Study for Noninvasive Cardiac Output Prediction in ICU Patients},
-  author = {Seol, Heeseung},
-  year   = {2025},
-  note   = {Samsung Medical Center Collaborative Research, IRB/DRB Approved}
-}
-```
+All patient records from both institutions were de-identified through pseudonymization and randomization before any data left the clinical systems. No combination of the retained fields can be used to re-identify any individual in this dataset.
 
 ---
 
