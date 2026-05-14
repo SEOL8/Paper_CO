@@ -25,21 +25,21 @@ set_seed(42)
 class PPGECGDataset(Dataset):
     """
     Each pickle must contain:
-      - ppg             : 1-D array, raw signal (~2500 samples at 250 Hz)
+      - ppg             : 1-D array, raw signal (2500 samples at 125 Hz, i.e. 20 s)
       - ecg_s_transform : 2-D array (599, 2500), pre-computed in S-Transform_test.ipynb
       - Sex, Age, Ht, Wt: scalar demographics
       - co              : cardiac output label (L/min)
     """
     def __init__(self, data_path, patient_scaler=None, max_ppg_len=2500):
-        self.data = pd.read_pickle(data_path)
+        self.data        = pd.read_pickle(data_path)
         self.max_ppg_len = max_ppg_len
 
         patient_info = self.data[['Sex', 'Age', 'Ht', 'Wt']].values.astype(np.float32)
         if patient_scaler is None:
-            self.scaler = StandardScaler()
+            self.scaler      = StandardScaler()
             self.patient_info = self.scaler.fit_transform(patient_info)
         else:
-            self.scaler = patient_scaler
+            self.scaler      = patient_scaler
             self.patient_info = self.scaler.transform(patient_info)
 
     def __len__(self):
@@ -48,12 +48,12 @@ class PPGECGDataset(Dataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
 
-        ppg = np.zeros(self.max_ppg_len, dtype=np.float32)
-        sig = row['ppg']
-        n = min(self.max_ppg_len, len(sig))
+        ppg    = np.zeros(self.max_ppg_len, dtype=np.float32)
+        sig    = row['ppg']
+        n      = min(self.max_ppg_len, len(sig))
         ppg[:n] = sig[:n]
-        ppg = (ppg - ppg.mean()) / (ppg.std() + 1e-8)
-        ppg_tensor = torch.from_numpy(ppg).unsqueeze(-1)         # (2500, 1)
+        ppg    = (ppg - ppg.mean()) / (ppg.std() + 1e-8)   # z-score per segment
+        ppg_tensor = torch.from_numpy(ppg).unsqueeze(-1)    # (2500, 1)
 
         ecg_st = row['ecg_s_transform']
         if not isinstance(ecg_st, np.ndarray):
@@ -63,7 +63,7 @@ class PPGECGDataset(Dataset):
         ecg_tensor = torch.from_numpy(ecg_st.astype(np.float32))  # (1, 599, 2500)
 
         patient_tensor = torch.from_numpy(self.patient_info[idx])  # (4,)
-        co_tensor = torch.tensor(float(row['co']), dtype=torch.float32)
+        co_tensor      = torch.tensor(float(row['co']), dtype=torch.float32)
 
         return ppg_tensor, ecg_tensor, patient_tensor, co_tensor
 
@@ -74,8 +74,8 @@ def build_dataloaders(data_dir='./', batch_size=64):
     test_set  = PPGECGDataset(os.path.join(data_dir, 'test.pkl'), patient_scaler=train_set.scaler)
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,  drop_last=True)
-    val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False, drop_last=True)
-    test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False, drop_last=True)
+    val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False, drop_last=False)
+    test_loader  = DataLoader(test_set,  batch_size=batch_size, shuffle=False, drop_last=False)
 
     return train_loader, val_loader, test_loader
 
@@ -235,7 +235,7 @@ class MultimodalCOPredictor(nn.Module):
 
     def forward(self, ppg, ecg_st, patient_info):
         """
-        ppg         : (B, 2500, 1)       raw PPG waveform
+        ppg         : (B, 2500, 1)       raw PPG waveform, z-score normalized per segment
         ecg_st      : (B, 1, 599, 2500)  S-Transform of ECG
         patient_info: (B, 4)             [Sex, Age, Ht, Wt], StandardScaler applied
         returns     : (B,)               predicted CO in L/min
@@ -249,10 +249,10 @@ class MultimodalCOPredictor(nn.Module):
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = MultimodalCOPredictor().to(device)
+    model  = MultimodalCOPredictor().to(device)
     model.eval()
 
-    B = 4
+    B            = 4
     ppg          = torch.randn(B, 2500, 1).to(device)
     ecg_st       = torch.randn(B, 1, 599, 2500).to(device)
     patient_info = torch.randn(B, 4).to(device)

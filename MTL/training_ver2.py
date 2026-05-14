@@ -1,12 +1,12 @@
 """
 training_ver2.py — Staged Training v2
 
-Stage 1 : AutoEncoder pre-training
-    ecg_time_enc + ppg_time_enc 만 학습
+Stage 1: AutoEncoder pre-training
+    Train ecg_time_enc and ppg_time_enc only.
     Loss: PRD(ecg_recon, ecg_orig) + PRD(ppg_recon, ppg_orig)
 
-Stage 2 : CO prediction (AE frozen)
-    AE 동결 후 FreqEncoder + PatientEncoder + ModalFusion + pred_head 학습
+Stage 2: CO prediction with frozen AE
+    Freeze AE weights. Train FreqEncoder + PatientEncoder + ModalFusion + pred_head.
     Loss: SmoothL1(pred_co, true_co)
 """
 
@@ -69,9 +69,9 @@ def pretrain_ae_epoch(model, loader, optimizer, device) -> dict:
             batch['ppg_freq'].to(device).contiguous(),
             batch['patient_info'].to(device).contiguous(),
         )
-        l_ecg  = prd_loss(ecg_recon, ecg_time)
-        l_ppg  = prd_loss(ppg_recon, ppg_time)
-        loss   = 0.5 * (l_ecg + l_ppg)
+        l_ecg = prd_loss(ecg_recon, ecg_time)
+        l_ppg = prd_loss(ppg_recon, ppg_time)
+        loss  = 0.5 * (l_ecg + l_ppg)
         loss.backward()
         optimizer.step()
 
@@ -87,7 +87,7 @@ def pretrain_ae_epoch(model, loader, optimizer, device) -> dict:
 # ---------------------------------------------------------------------------
 
 def train_co_epoch(model, loader, optimizer, device, grad_clip: float = 0.5) -> dict:
-    """Train all non-AE modules with SmoothL1 CO loss. AE must be frozen beforehand."""
+    """Train all non-AE modules with SmoothL1 CO loss. Call freeze_autoencoders() before use."""
     model.train()
     co_loss_fn = nn.SmoothL1Loss()
     losses = []

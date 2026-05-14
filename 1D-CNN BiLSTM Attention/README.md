@@ -1,83 +1,88 @@
-# Non-Invasive Cardiac Output Estimation(baseline)
+# Non-invasive cardiac output estimation — baseline model
 
-Cardiac output (CO, L/min) is estimated noninvasively using PPG/ECG signals and patient data (gender, age, height, weight).
+Cardiac output (CO, L/min) is estimated from PPG and ECG signals together with patient demographics (sex, age, height, weight).
 
----
-
-## Models
-
-| Model | Directory |
-|-------|-----------|
-| 1D CNN + BiLSTM + Self-Attention (baseline) | `1D-CNN BiLSTM Attention/` |
-
+This is the baseline model used for comparison in the paper. It is fully self-contained and reproducible.
 
 ---
 
-## Model Architecture (1D CNN + BiLSTM + Self-Attention)
+## Model architecture
 
-![Model Pipeline](Model_architecture.png)
+<p align="center">
+  <img src="Model_architecture.png" alt="Model pipeline" width="700">
+</p>
 
 | Component | Description |
-|-----------|-------------|
-| `CNN1D` | 4-block 1D convolution for local feature extraction |
-| `BiLSTM` | Bidirectional LSTM for temporal dependency modeling |
-| `SignalAttention` | Window-based self-attention per signal stream |
-| `MLP` | Patient metadata encoding (Sex, Age, Ht, Wt) |
-| `FusionAttention` | Attention fusion across PPG, ECG, and patient streams |
+|---|---|
+| `CNN1D` | 4-block 1D convolution (channels: 1→32→64→128→256) for local feature extraction |
+| `BiLSTM` | 3-layer bidirectional LSTM (hidden=256, output=512) for temporal dependency modeling |
+| `SignalAttention` | Window-based local self-attention per signal stream; returns a single context vector via mean-pooling |
+| `MLP` | Patient metadata encoder: (4,) → (64,) → (256,) with BatchNorm and Dropout |
+| `FusionAttention` | Self-attention across the 3 modality vectors (PPG, ECG, patient info); residual + LayerNorm |
+| `output_head` | Linear(768 → 1) predicting CO in L/min |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
-.
-├── train.py                      # 학습 진입점
-├── evaluate.py                   # 평가 및 시각화
-├── config.py                     # 하이퍼파라미터 설정
+1D-CNN BiLSTM Attention/
+├── train.py                      # Training entry point
+├── evaluate.py                   # Evaluation and visualization
+├── config.py                     # Hyperparameter configuration
 ├── requirements.txt
 ├── data/
-│   └── dataset.py                # PPGECGDataset, 전처리, DataLoader 빌더
+│   └── dataset.py                # PPGECGDataset, preprocessing, DataLoader builder
 ├── models/
-│   └── cnn_bilstm_attention.py   # 모델 컴포넌트 및 SignalProcessingModel
+│   └── cnn_bilstm_attention.py   # Model components and SignalProcessingModel
 └── utils/
-    ├── metrics.py                # MSE / RMSE / MAE / R2 / MAPE 계산
-    ├── early_stopping.py         # EarlyStopping
-    └── bland_altman.py           # Bland-Altman 플롯
+    ├── metrics.py                # MSE / RMSE / MAE / R² / MAPE
+    ├── early_stopping.py         # EarlyStopping (patience-based, val loss)
+    └── bland_altman.py           # Bland-Altman plot and PE calculation
 ```
 
 ---
 
-## Data Types
+## Data
+
+The training scripts expect three `.pkl` files containing a pandas DataFrame with the following columns:
 
 | File | Description |
-|------|-------------|
-| `Train.pkl` | Train data |
-| `Val_df_final.pkl` | validation data |
-| `Test.pkl` | test data |
+|---|---|
+| `Train.pkl` | Training set |
+| `Val_df_final.pkl` | Validation set |
+| `Test.pkl` | Test set |
 
 | Column | Type | Description |
-|--------|------|-------------|
-| `ppg` | array | PPG Time-series signal(20s) |
-| `ecg` | array | ECG Time-series signal(20s) |
-| `Sex` | float | Gender |
-| `Age` | float | Age |
-| `Ht` | float | Ht (cm) |
-| `Wt` | float | Wt (kg) |
-| `co` | float | CO (L/min) |
-| `pid` | int | Randomized id |
+|---|---|---|
+| `ppg` | array (2500,) | PPG time-series, 20 s at 125 Hz |
+| `ecg` | array (2500,) | ECG time-series, 20 s at 125 Hz |
+| `Sex` | float | Biological sex |
+| `Age` | float | Age in years |
+| `Ht` | float | Height (cm) |
+| `Wt` | float | Weight (kg) |
+| `co` | float | Cardiac output (L/min) — thermodilution reference |
+| `pid` | int | Anonymized patient ID |
+
+Data are not included in this repository. See the root README for the cohort description.
+
 ---
 
-## install
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-In a GPU environment, install the version of PyTorch compatible with your CUDA version from the [PyTorch official website](https://pytorch.org/get-started/locally/).
+For GPU training, install the PyTorch build matching your CUDA version from [pytorch.org](https://pytorch.org/get-started/locally/).
 
 ---
 
 ## Usage
+
+Run all commands from inside this directory (`1D-CNN BiLSTM Attention/`).
+
+Place your `.pkl` data files in this directory (or update `data_dir` in `config.py`).
 
 ### Training
 
@@ -85,40 +90,75 @@ In a GPU environment, install the version of PyTorch compatible with your CUDA v
 python train.py
 ```
 
-Hyperparameters are modified in `config.py`.
+Key configuration options in `config.py`:
 
 ```python
-# config.py
 CONFIG = {
-    'data_dir':   '.',        # pkl 파일 위치
-    'save_dir':   './results', # 체크포인트 및 결과 저장 경로
-    'epochs':     200,
-    'learning_rate': 8e-4,
-    ...
+    'data_dir':              '.',      # directory containing Train.pkl, Val_df_final.pkl, Test.pkl
+    'save_dir':              './results',
+    'epochs':                200,
+    'early_stopping_patience': 30,
+    'learning_rate':         8e-4,
+    'weight_decay':          1e-3,
+    'hidden_size':           256,
+    'lstm_layers':           3,
+    'dropout':               0.3,
+    'batch_size':            64,
+    'max_len':               2500,
+    'grad_clip_norm':        0.3,
 }
 ```
 
-The processing is complete, the following files will be created in the `results/` directory.
+`train.py` prints a PID overlap check at startup to confirm no data leakage across splits.
+
+After training, the following files are saved to `results/`:
 
 ```
 results/
-├── best_model.pth           # 최적 체크포인트
-├── evaluation_results.csv   # 샘플별 예측 결과
-├── patient_summary.csv      # 환자별 지표 요약
-├── scatter_plot.png         # 실제 vs 예측 산점도
-├── error_distribution.png   # 예측 오차 분포
-└── bland_altman_plot.png    # Bland-Altman 플롯
+├── best_model.pth           # Best checkpoint (lowest val loss)
+├── evaluation_results.csv   # Per-segment predictions and patient-level metrics
+├── patient_summary.csv      # Per-patient metric summary (mean ± std)
+├── scatter_plot.png         # Actual vs. predicted CO scatter plot
+├── error_distribution.png   # Prediction error histogram
+└── bland_altman_plot.png    # Bland-Altman plot with PE
 ```
 
-### Evaluation
+### Evaluation on a saved checkpoint
 
 ```python
 import torch
 from models.cnn_bilstm_attention import SignalProcessingModel
 from evaluate import evaluate_and_visualize
+from data.dataset import build_loaders
+from config import CONFIG
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = SignalProcessingModel().to(device)
-model.load_state_dict(torch.load('results/best_model.pth', map_location=device))
+model.load_state_dict(
+    torch.load('results/best_model.pth', map_location=device, weights_only=True)
+)
+
+import pandas as pd
+test_df = pd.read_pickle('Test.pkl')
+_, _, test_loader = build_loaders(
+    pd.read_pickle('Train.pkl'),
+    pd.read_pickle('Val_df_final.pkl'),
+    test_df,
+    CONFIG,
+)
 results = evaluate_and_visualize(model, test_loader, device, save_path='./results')
 ```
+
+---
+
+## Results (internal test set, SMC)
+
+| Metric | Value |
+|---|---|
+| RMSE | 1.325 L/min |
+| MAE | 1.12 L/min |
+| R² | 0.234 |
+| Mean bias | 4.2% |
+| PE | 42.1% |
+
+See the root README for the full model comparison table.

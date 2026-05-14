@@ -62,7 +62,7 @@ Patient-level split — no segment overlap between train, validation, and test s
 
 ![Bland-Altman](./bland-altman.png)
 
-Bland-Altman: mean bias 1.22%, 95% limits of agreement −31.42% to +33.62%, 95.2% of points within limits.
+Bland-Altman: mean bias 0.7%, 95% limits of agreement −31.42% to +33.62%, PE 32.62%. These numbers are from the internal development evaluation (SMC test set). See the root README for the full model comparison table.
 
 ---
 
@@ -86,7 +86,7 @@ Each pickle should contain:
 
 | Column | Shape | Notes |
 |--------|-------|-------|
-| `ppg` | 1-D array (~2500) | Raw waveform at 250 Hz |
+| `ppg` | 1-D array (2500,) | Raw waveform at 125 Hz (20 s) |
 | `ecg_s_transform` | `(599, 2500)` | S-Transform output |
 | `Sex`, `Age`, `Ht`, `Wt` | scalar | Patient demographics |
 | `co` | scalar | Cardiac output (L/min) |
