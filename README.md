@@ -95,7 +95,7 @@ Three branches extract features in parallel — time-domain, frequency-domain, a
 
 ### Time domain module
 
-Raw ECG and PPG go through a U-Net style autoencoder. Three stages of 1D convolution and pooling compress the 20-second signal to a 256-dimensional latent vector. Skip connections between encoder and decoder stages preserve morphological features at multiple scales, while the bottleneck learns a compact summary. This branch trains with a reconstruction objective alongside CO prediction, which keeps the encoder from dropping physiologically relevant information that doesn't immediately help regression.
+Raw ECG and PPG each pass through a U-Net style autoencoder. Stacked 1D convolution and pooling stages progressively compress the 20-second signal into a compact latent representation. Skip connections between encoder and decoder preserve morphological features at multiple temporal scales, while the bottleneck distills a summary of the waveform. This branch trains with a reconstruction objective alongside CO prediction — the idea being that if the encoder can reproduce the original signal, it is less likely to silently discard physiologically meaningful structure that doesn't immediately help with regression.
 
 <p align="center">
   <img src="figures/autoencoder.png" alt="Autoencoder architecture" width="700">
@@ -107,11 +107,11 @@ The same raw signals pass independently through an FFT, then a 1D CNN with batch
 
 ### Patient information module
 
-A two-layer MLP encodes sex, age, height, and weight. Body size and composition have a real effect on stroke volume, and a model that ignores demographics will systematically mis-estimate CO for patients at the distribution extremes.
+An MLP encodes sex, age, height, and weight into a learned representation. Body size and composition have a real effect on stroke volume, and a model that ignores demographics will systematically mis-estimate CO for patients at the distribution extremes.
 
 ### Fusion module
 
-The five modality representations — ECG (time and frequency), PPG (time and frequency), and patient information — are projected to a common 128-dimensional token space and fused through a 2-layer multi-head Transformer encoder. Self-attention across all five tokens lets each modality attend to every other, including the patient context, so signal branch weighting adapts to each patient's hemodynamic situation at inference time.
+Each modality branch — ECG time, ECG frequency, PPG time, PPG frequency, and patient information — produces a representation that is projected into a shared token space. These tokens are then fused through a multi-head Transformer encoder using self-attention, so each modality can attend to every other, including the patient context. The result is that how much the model weights each signal branch shifts dynamically depending on the patient's hemodynamic state at inference time, rather than being fixed by architecture.
 
 <p align="center">
   <img src="figures/cross_attention.png" alt="Patient-conditioned fusion" width="680">
@@ -146,24 +146,6 @@ $$\text{RMSE} = \sqrt{\frac{1}{M}\sum_{i=1}^{M}(\text{CO}_{\text{true},i} - \tex
 $$\text{MAE} = \frac{1}{M}\sum_{i=1}^{M}|\text{CO}_{\text{true},i} - \text{CO}_{\text{pred},i}|$$
 
 $$R^2 = 1 - \frac{\displaystyle\sum_{i=1}^{M}(\text{CO}_{\text{true},i} - \text{CO}_{\text{pred},i})^2}{\displaystyle\sum_{i=1}^{M}(\text{CO}_{\text{true},i} - \overline{\text{CO}_{\text{true}}})^2}$$
-
-### Hyperparameters
-
-<div align="center">
-
-| Parameter | Value |
-|---|---|
-| Batch size | 64 |
-| Optimizer | AdamW |
-| Learning rate | 1e-4 |
-| Weight decay | 1e-5 |
-| LR scheduler | ReduceLROnPlateau |
-| Max epochs | 300 |
-| Early stopping patience | 30 |
-| Latent dimension | 256 |
-| Loss function | 0.8 × L_pred + 0.2 × L_recon |
-
-</div>
 
 ---
 
